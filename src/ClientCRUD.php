@@ -9,18 +9,18 @@ class ClientCRUD {
     private $s3;
 
     public function __construct() {
-        $this->db = new Db();
-        $this->redis = new Redis();
-        $this->s3 = new S3();
+        $this->db = new Database();
+        $this->redis = new RedisClient();
+        $this->s3 = new S3Storage();
     }
 
     public function createClient($data, $file) {
+        $client_logo = $file ? $this->s3->uploadFile($file) : 'no-image.jpg';
+        $data['client_logo'] = $client_logo;
+
         $sql = "INSERT INTO my_client (name, slug, is_project, self_capture, client_prefix, client_logo, address, phone_number, city, created_at, updated_at) 
                 VALUES (:name, :slug, :is_project, :self_capture, :client_prefix, :client_logo, :address, :phone_number, :city, NOW(), NOW()) 
                 RETURNING id";
-
-        $client_logo = $file ? $this->s3->uploadFile($file) : 'no-image.jpg';
-        $data['client_logo'] = $client_logo;
 
         $stmt = $this->db->query($sql, $data);
         if ($stmt) {
@@ -49,21 +49,21 @@ class ClientCRUD {
         $client = $this->getClient($slug);
         if (!$client) return false;
 
+        $data = array_merge($client, $data);
+
         if ($file) {
             $data['client_logo'] = $this->s3->uploadFile($file);
-        } else {
-            $data['client_logo'] = $client['client_logo'];
         }
 
         $sql = "UPDATE my_client SET name=:name, is_project=:is_project, self_capture=:self_capture, client_prefix=:client_prefix, 
                 client_logo=:client_logo, address=:address, phone_number=:phone_number, city=:city, updated_at=NOW() WHERE slug=:slug";
 
-        $data['slug'] = $slug;
         $updated = $this->db->query($sql, $data);
         if ($updated) {
+            $newClient = $this->getClient($slug);
             $this->redis->delete($slug);
-            $this->redis->set($slug, json_encode($data));
-            return $data;
+            $this->redis->set($slug, json_encode($newClient));
+            return $newClient;
         }
         return false;
     }
